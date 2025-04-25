@@ -18,12 +18,10 @@ library(gtsummary); library(marginaleffects); library(ggeffects);
 library(splines)
 
 # no scientific notation
-
 options(scipen=999)
-set.seed(1996)
+set.seed(30121996)
 
 #custom ggplot theme
-
 theme_avp <- function() {
   theme_bw(base_size=10) +
     theme(axis.title.x = element_text(size = 9),
@@ -81,7 +79,6 @@ get_pred_df <- function(design, values, predictor, remove_outliers=TRUE) {
   return(newdata)
 }
 
-# functions for customizing p values
 
 remove_left_zero <- function(p_values) {
   stringr::str_replace_all(p_values, "^0", "")
@@ -101,20 +98,19 @@ p_format_g <- function(p.value) {
   return(new_p$p.value)
 }
 
-# load dataset
-
-load("data/nhanes_raw_dataframe.Rdata")
+# load raw dataset
+load(here("nhanes_raw_dataframe.Rdata"))
 
 # creating and transforming variables before setting up survey design
 # nutrients
 
 rh_dxa_all <- nhanes_raw_dataframe |> 
   mutate(kcal = case_when(
-    DRDINT.x == 2 ~ ((DR1TKCAL+DR2TKCAL)/2), # these lines calculate the mean between two dietary recalls, when two are available
-    DRDINT.x == 1 ~ DR1TKCAL # or just pick the first one that is available, if only one is.
+    DRDINT.x == 2 ~ ((DR1TKCAL+DR2TKCAL)/2), 
+    DRDINT.x == 1 ~ DR1TKCAL 
   )) |> 
   mutate(PTN = case_when(
-    DRDINT.x == 2 ~ ((DR1TPROT+DR2TPROT)/2), # same for other nutrients.
+    DRDINT.x == 2 ~ ((DR1TPROT+DR2TPROT)/2), 
     DRDINT.x == 1 ~ DR1TPROT
   )) |> 
   mutate(CHO = case_when(
@@ -163,17 +159,12 @@ rh_dxa_all <- rh_dxa_all |>
     MCQ191 == "2" ~ "Osteoarthritis",
     MCQ191 == "1" ~ "Rheumatoid arthritis",
     MCQ191 == "3" ~ "Psoriatic arthritis",
-  ))
-         
-# creating adequate sample weights
-# herein we use the 24h recall day 1 weight, and divide by the number of cycles
-
-rh_dxa_all <- rh_dxa_all |> 
+  )) |> 
   mutate(weights_all = case_when(
     DRDINT.x == 2 ~ (WTDR2D.x * (1/6)),
     DRDINT.x == 1 ~ (WTDRD1.x * (1/6))), 
     weights_all_exam = WTMEC2YR * (1/6))
-
+  
 # calculating physical activity
 # obtain METs for each domain and intensity, then sum it up, then classify
 
@@ -234,7 +225,7 @@ rh_dxa_all <- rh_dxa_all |>
 
 # load previously joined medication dataframe
 
-load("data/medication_df.Rdata")
+load("medication_df.Rdata")
 
 # create a string with the names of glucocorticoids 
 gluc_names <- c('^(DEFLAZACORT|PREDNISOLONE|DEXAMETHASONE|HYDROCORTISONE|METHYLPREDNISOLONE|PREDNISONE|CORTISONE)$')
@@ -311,21 +302,23 @@ rh_dxa_all <- rh_dxa_all |>
          EI_EER_class = case_when(EI_EER_ratio < lower_cutoff ~ "Under-reporter", # classification based on the cutoff points
                                   EI_EER_ratio >= lower_cutoff & EI_EER_ratio < upper_cutoff ~ "Plausible reporter",
                                   EI_EER_ratio >= upper_cutoff ~ "Over-reporter")
-  )
+  ) |> 
+  mutate(PTNgkgFFM = PTN/DXDTOLE)
+
+# education and income
+
+rh_dxa_all <- rh_dxa_all |> mutate(DMDEDUC2 = if_else(DMDEDUC2 == 7 | DMDEDUC2 == 9, NA_real_, DMDEDUC2))
 
 # setting up survey design
 
 rh_dxa_all_analyse <- subset(rh_dxa_all, !is.na(SDMVPSU) & !is.na(SDMVSTRA)) |> 
-  dplyr::select(SEQN, PTN, CHO, LIP, kcal, PTNgkg, 
+  dplyr::select(SEQN, DMDEDUC2, INDFMPIR, PTN, CHO, LIP, kcal, PTNgkg, 
                 DXDTOLE, DXDTOBMD, DXXOFBMD, 
                 DXXOSBMD, RIAGENDR, BMXHT, BMXWT, RIDAGEYR, disease_cat, 
                 SDMVPSU, SDMVSTRA, weights_all, RIDRETH1, BMXBMI, femur_t_score, 
                 femurneck_t_score, femur_osteoporosis, femurneck_osteoporosis, 
                 DR1DRSTZ, DXAEXSTS, DXAFMRST, DXASPNST, DXXNKBMD, MET, MET_class,
-                days_gc, EI_EER_class, cycle)
-
-# this dataset can then be saved and loaded when you actually want to analyze it.
-# save(rh_dxa_all_analyse, file="data/NHANES_RH.Rdata")
+                days_gc, EI_EER_class, cycle, PTNgkgFFM)
 
 # set survey
 # set individuals without sample weights to 0, to exclude later
@@ -358,16 +351,6 @@ NHANES_rh <- subset(NHANES_rh, DR1DRSTZ == "1") # selecting adequate r24 data
 NHANES_rh <- subset(NHANES_rh, RIDAGEYR >= 18 & RIDAGEYR <= 85) # selecting adults 
 
 nrow(NHANES_rh)
-
-# adults older than 85 are still coded as 85 in NHANES.
-
-NHANES_subset_lm <- subset(NHANES_rh, DXAEXSTS == "1" & !is.na(DXDTOLE))
-
-NHANES_subset_wb <- subset(NHANES_rh, DXAEXSTS == "1" & !is.na(DXDTOBMD))
-
-NHANES_subset_femur <- subset(NHANES_rh, DXAFMRST == "1" & !is.na(DXXOFBMD))
-
-NHANES_subset_spine <- subset(NHANES_rh, DXASPNST == "1" & !is.na(DXXOSBMD))
 
 # creating subsets per outcome
 
@@ -481,9 +464,12 @@ plot(predict_response(model_leanmass_protein, "PTN [all]"),
      show_residuals=TRUE, show_residuals_line = TRUE) +
   labs(y="Lean mass", title=NULL)
 
+## g kg 
+
 model_leanmass_proteingkg <- svyglm(DXDTOLE ~ PTNgkg + CHO + LIP + RIAGENDR + 
                                       BMXWT + RIDAGEYR + MET + days_gc + EI_EER_class + disease_cat, 
                                  design=NHANES_subset_lm) 
+
 summary(model_leanmass_proteingkg) 
 model2<-broom::tidy(model_leanmass_proteingkg,conf.int=T)
 
@@ -502,7 +488,7 @@ model_leanmass_proteingkg_poly <- svyglm(DXDTOLE ~ poly(PTNgkg, 2) + CHO + LIP +
                                        design=NHANES_subset_lm) 
 
 summary(model_leanmass_proteingkg_poly) 
-car::Anova(model_leanmass_proteingkg_poly, type="II", test="F") # we now use an F test via a type II anova table to check for significance of the polynomial term as a whole
+car::Anova(model_leanmass_proteingkg_poly, type="II") # we now use a test via a type II anova table to check for significance of the polynomial term as a whole
 
 anova(model_leanmass_proteingkg, model_leanmass_proteingkg_poly) # Likelihood ratio test provided by survey package to compare models 
 
@@ -547,12 +533,12 @@ plot(predict_response(model_wbBMD_proteingkg, "PTNgkg [all]"),
 
 # polynomial WB BMD models
 
-model_wbBMD_protein_poly <- svyglm(DXDTOBMD ~ poly(PTN, 2) + CHO + LIP + RIAGENDR + BMXWT + RIDAGEYR
+model_wbBMD_protein_poly <- svyglm(DXDTOBMD ~ bs(PTN, 2) + CHO + LIP + RIAGENDR + BMXWT + RIDAGEYR
                                    + MET + days_gc + EI_EER_class + disease_cat, 
                                    design=NHANES_subset_wb) 
 
 summary(model_wbBMD_protein_poly) 
-car::Anova(model_wbBMD_protein_poly, type="II", test="F")
+car::Anova(model_wbBMD_protein_poly, type="II")
 
 AIC(model_wbBMD_protein, model_wbBMD_protein_poly)
 anova(model_wbBMD_protein, model_wbBMD_protein_poly) 
@@ -566,7 +552,7 @@ model_wbBMD_proteingkg_poly <- svyglm(DXDTOBMD ~ poly(PTNgkg, 2) + CHO + LIP + R
                                    design=NHANES_subset_wb) 
 
 summary(model_wbBMD_proteingkg_poly) 
-car::Anova(model_wbBMD_proteingkg_poly, type="II", test="F")
+car::Anova(model_wbBMD_proteingkg_poly, type="II")
 
 AIC(model_wbBMD_proteingkg, model_wbBMD_proteingkg_poly)
 anova(model_wbBMD_proteingkg, model_wbBMD_proteingkg_poly) 
@@ -606,7 +592,7 @@ plot(predict_response(model_femurBMD_proteingkg, "PTNgkg [all]"),
   labs(y="Femur BMD", title=NULL)
 
 ## both plots show some non-linearity. the ptngkg plot even suggest a small downfall towards the end
-## of the x axis, suggesting a more complex pattern. we fit third degree polynomial and natural splines.
+## of the x axis, suggesting a more complex pattern. we fit polynomials and natural splines.
 ## attempting best fits.
 
 model_femurBMD_protein_poly <- svyglm(DXXOFBMD ~ poly(PTN, 2) + CHO + LIP + 
@@ -637,9 +623,9 @@ model_femurBMD_proteingkg_ns <- svyglm(DXXOFBMD ~ ns(PTNgkg, 3) + CHO + LIP +
                                            + MET + days_gc + EI_EER_class + disease_cat, 
                                        design=NHANES_subset_femur)
 
-car::Anova(model_femurBMD_proteingkg_poly_2, type="II", test="F")
-car::Anova(model_femurBMD_proteingkg_poly_3, type="II", test="F")
-car::Anova(model_femurBMD_proteingkg_ns, type="II", test="F")
+car::Anova(model_femurBMD_proteingkg_poly_2, type="II")
+car::Anova(model_femurBMD_proteingkg_poly_3, type="II")
+car::Anova(model_femurBMD_proteingkg_ns, type="II")
 
 AIC(model_femurBMD_proteingkg,
     model_femurBMD_proteingkg_poly_2,
@@ -696,10 +682,10 @@ AIC(model_fneckBMD_protein,
     model_fneckBMD_protein_poly_3,
     model_fneckBMD_protein_ns)
 
-car::Anova(model_fneckBMD_protein, type="II", test="F")
-car::Anova(model_fneckBMD_protein_poly_2, type="II", test="F")
-car::Anova(model_fneckBMD_protein_poly_3, type="II", test="F")
-car::Anova(model_fneckBMD_protein_ns, type="II", test="F")
+car::Anova(model_fneckBMD_protein, type="II")
+car::Anova(model_fneckBMD_protein_poly_2, type="II")
+car::Anova(model_fneckBMD_protein_poly_3, type="II")
+car::Anova(model_fneckBMD_protein_ns, type="II")
 
 plot(predict_response(model_fneckBMD_protein, "PTN [all]"), 
      show_residuals=TRUE, show_residuals_line = TRUE) +
@@ -745,10 +731,10 @@ AIC(model_fneckBMD_proteingkg,
     model_fneckBMD_proteingkg_poly_3,
     model_fneckBMD_proteingkg_ns)
 
-car::Anova(model_fneckBMD_proteingkg, type="II", test="F")
-car::Anova(model_fneckBMD_proteingkg_poly_2, type="II", test="F")
-car::Anova(model_fneckBMD_proteingkg_poly_3, type="II", test="F")
-car::Anova(model_fneckBMD_proteingkg_ns, type="II", test="F")
+car::Anova(model_fneckBMD_proteingkg, type="II")
+car::Anova(model_fneckBMD_proteingkg_poly_2, type="II")
+car::Anova(model_fneckBMD_proteingkg_poly_3, type="II")
+car::Anova(model_fneckBMD_proteingkg_ns, type="II")
 
 plot(predict_response(model_fneckBMD_proteingkg, "PTNgkg [all]"), 
      show_residuals=TRUE, show_residuals_line = TRUE) +
@@ -765,6 +751,28 @@ plot(predict_response(model_fneckBMD_proteingkg_poly_3, "PTNgkg [all]"),
 plot(predict_response(model_fneckBMD_proteingkg_ns, "PTNgkg [all]"), 
      show_residuals=TRUE, show_residuals_line = TRUE) +
   labs(y="Femoral Neck", title=NULL)
+
+## similarly, all models have statistically significant associations with ptnkg,
+## with the poly_3 and ns models having better AIC values.
+## however, given the partial residual plot, the poly_3 model seems to be overestimating
+## the curve towards the end. the natural spline model appears to have a better fit in that sense.
+## we select the NS model as our final model.
+
+# ptn gkg
+
+model_fneckBMD_proteingkg_ns_sex <- svyglm(DXXNKBMD ~ ns(PTNgkg, 3) * RIAGENDR + CHO + LIP +
+                                             BMXWT + RIDAGEYR
+                                           + MET + days_gc + EI_EER_class + disease_cat, 
+                                           design=NHANES_subset_femur)
+
+model_fneckBMD_proteingkg_bs_sex <- svyglm(DXXNKBMD ~ bs(PTNgkg, 3) * RIAGENDR + CHO + LIP +
+                                             BMXWT + RIDAGEYR
+                                           + MET + days_gc + EI_EER_class + disease_cat, 
+                                           design=NHANES_subset_femur)
+
+AIC(model_fneckBMD_proteingkg_ns_sex, model_fneckBMD_proteingkg_bs_sex) # b spline seems to have better adjustment.
+
+car::Anova(model_fneckBMD_proteingkg_bs_sex, type="II") # interaction not significant
 
 # spine
 
@@ -820,7 +828,7 @@ model_summary_all <- reduce(list(model1,model2,model3,model4,
 # creating table 1 with gtsummary
 
 table_1_summary <- sample_dat |>
- select(disease_cat, RIDAGEYR, RIAGENDR, RIDRETH1, BMXHT, BMXWT, BMXBMI, days_gc, 
+ select(DMDEDUC2, INDFMPIR, disease_cat, RIDAGEYR, RIAGENDR, RIDRETH1, BMXHT, BMXWT, BMXBMI, days_gc, 
         MET, MET_class, kcal, CHO, PTN, PTNgkg, LIP,
         DXDTOLE, DXDTOBMD, DXXNKBMD, femurneck_t_score, femurneck_osteoporosis, DXXOSBMD) |>
  tbl_summary(by = disease_cat, missing = "no", statistic = all_continuous() ~ "{mean} ({sd})",
@@ -842,7 +850,7 @@ table_1_summary <- sample_dat |>
   add_overall()
 
 # save
-# table_1_summary |> as_hux_table() |> writexl::write_xlsx("tables/table1.xlsx")
+# table_1_summary |> as_hux_table() |> writexl::write_xlsx("Tables/table1_28_11_24.xlsx")
 
 #### Plots #####################################################################
 
@@ -863,6 +871,8 @@ m5_anova <- car::Anova(model_femurBMD_protein_poly, type="II")
 m5_anova_neck <- car::Anova(model_fneckBMD_protein_poly_2, type="II")
 m6_anova <- car::Anova(model_femurBMD_proteingkg_ns, type="II")
 m6_anova_neck <- car::Anova(model_fneckBMD_proteingkg_ns, type="II")
+
+# texts
 
 txt1_an <- glue("Coefficient: {summa$estimate[1]} kg lean mass per 50 g protein (95%CI {summa$conf.low[1]} to {summa$conf.high[1]})\np-value {p_format_g(summa$p.value[1])}")
 txt2_an <- glue("Polynomial term p-value {p_format_g(m2_anova$`Pr(>Chisq)`[1])}")
@@ -888,6 +898,15 @@ pred_data_5 <- get_pred_df(NHANES_subset_femur, NHANES_subset_femur$variables$PT
 pred_data_6 <- get_pred_df(NHANES_subset_femur, NHANES_subset_femur$variables$PTNgkg, "PTNgkg")
 pred_data_7 <- get_pred_df(NHANES_subset_spine, NHANES_subset_spine$variables$PTN, "PTN")
 pred_data_8 <- get_pred_df(NHANES_subset_spine, NHANES_subset_spine$variables$PTNgkg, "PTNgkg")
+
+pred_data_1_both <- pred_data_1 |> mutate(RIAGENDR = "2") |> filter(PTN < 150) |> bind_rows(pred_data_1) 
+pred_data_2_both <- pred_data_2 |> mutate(RIAGENDR = "2") |> filter(PTNgkg < 2) |> bind_rows(pred_data_2) 
+pred_data_3_both <- pred_data_3 |> mutate(RIAGENDR = "2") |> filter(PTN < 150) |> bind_rows(pred_data_3) 
+pred_data_4_both <- pred_data_4 |> mutate(RIAGENDR = "2") |> filter(PTNgkg < 2) |> bind_rows(pred_data_4) 
+pred_data_5_both <- pred_data_5 |> mutate(RIAGENDR = "2") |> filter(PTN < 150) |> bind_rows(pred_data_5) 
+pred_data_6_both <- pred_data_6 |> mutate(RIAGENDR = "2") |> filter(PTNgkg < 2) |> bind_rows(pred_data_6) 
+pred_data_7_both <- pred_data_7 |> mutate(RIAGENDR = "2") |> filter(PTN < 150) |> bind_rows(pred_data_7) 
+pred_data_8_both <- pred_data_8 |> mutate(RIAGENDR = "2") |> filter(PTNgkg < 2) |> bind_rows(pred_data_8) 
 
 # function to retrieve weights correctly
 
@@ -955,6 +974,7 @@ pred8 <- predictions(model_spineBMD_proteingkg,
                    by=c("PTNgkg"), newdata=pred_data_8,
                    wts=get_weights(NHANES_subset_spine, "PTNgkg"))
 
+# plots
 
 m_p1 <- ggplot(pred1, aes(x=PTN, y=estimate)) +
   geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha=.2, fill="blue1") +
@@ -1075,7 +1095,7 @@ prp_all <- (m_p1 | m_p2) / (m_p3 | m_p4) / (m_p5_neck | m_p6_neck) / (m_p7 | m_p
 
 prp_all
 
-# ggsave(here("figures/marginal_plots_ALL.png"), units="in", width=9, height=14, dpi=600)
+#ggsave(here("Figures/marginal_plots_ALL_no_points_21_11_24.png"), units="in", width=9, height=14, dpi=600)
 
 #### analyzing t-scores ###############################
 
@@ -1084,14 +1104,14 @@ model_tscore_protein_poly <- svyglm(femurneck_t_score ~ poly(PTN, 2) + CHO + LIP
                                     + MET + days_gc + EI_EER_class + disease_cat, 
                                     design=NHANES_subset_femur)
 
-car::Anova(model_tscore_protein_poly, type="II", test="F")
+car::Anova(model_tscore_protein_poly, type="II")
 
 model_tscore_proteingkg_ns <- svyglm(femurneck_t_score ~ ns(PTNgkg, 3) + CHO + LIP +
                                        RIAGENDR + BMXWT + RIDAGEYR
                                      + MET + days_gc + EI_EER_class + disease_cat, 
                                      design=NHANES_subset_femur)
 
-car::Anova(model_tscore_proteingkg_ns, type="II", test="F")
+car::Anova(model_tscore_proteingkg_ns, type="II")
 
 plot(predict_response(model_tscore_protein_poly, "PTN [all]"),
      show_residuals = TRUE, show_residuals_line = TRUE)
@@ -1141,7 +1161,7 @@ pred_tscore_2 <- predictions(model_tscore_proteingkg_ns,
 
 tscore_p1 + tscore_p2 + plot_annotation(tag_levels = 'A')
 
-#ggsave(here("figures/femoralneck_tscore_marginals.png"), units="in",
+#ggsave(here("Figures/femoralneck_tscore_marginals_28_11_24.png"), units="in",
 #       width=9, height=5, dpi=600)
 
 ## predictions at specific points 
@@ -1229,8 +1249,8 @@ pred_t2 <- reduce(list(pred_table2, pred_table4,
   select(predictor_level, label, row) |> 
   pivot_wider(names_from=predictor_level, values_from=label)
 
-pred_t1 |> writexl::write_xlsx("tables/predicted_values_models_t1.xlsx")
-pred_t2 |> writexl::write_xlsx("tables/predicted_values_models_t2.xlsx")
+pred_t1 |> writexl::write_xlsx("Tables/predicted_values_models_t1.xlsx")
+pred_t2 |> writexl::write_xlsx("Tables/predicted_values_models_t2.xlsx")
 
 ## DAG #########################################################################
 
@@ -1329,14 +1349,10 @@ model_spineBMD_protein_un <- svyglm(DXXOSBMD ~ PTN,
 
 # unadjusted predictions
 
-un_pred1 <- predictions(model_leanmass_protein_un, by=c("PTN"),
-                        wts=NHANES_subset_lm$variables$weights_all)
-un_pred2 <- predictions(model_wbBMD_protein_un, by=c("PTN"),
-                        wts=NHANES_subset_wb$variables$weights_all)
-un_pred3 <- predictions(model_femurneckBMD_protein_un, by=c("PTN"),
-                        wts=NHANES_subset_femur$variables$weights_all)
-un_pred4 <- predictions(model_spineBMD_protein_un, by=c("PTN"),
-                        wts=NHANES_subset_spine$variables$weights_all)
+un_pred1 <- predictions(model_leanmass_protein_un, by=c("PTN"))
+un_pred2 <- predictions(model_wbBMD_protein_un, by=c("PTN"))
+un_pred3 <- predictions(model_femurneckBMD_protein_un, by=c("PTN"))
+un_pred4 <- predictions(model_spineBMD_protein_un, by=c("PTN"))
 
 # unadjusted plots
 
@@ -1379,6 +1395,6 @@ un_p4 <- ggplot(un_pred4, aes(x=PTN, y=estimate)) +
 (un_p1 + un_p2 + un_p3 + un_p4) &
   plot_annotation(tag_levels = "A")
  
-#ggsave(here("figures/scatter_unadjusted.png"), units="in", width=14, height=10, dpi=600, type="cairo")
+#ggsave(here("Figures/scatter_unadjusted.png"), units="in", width=14, height=10, dpi=600, type="cairo")
 
 ################################################################################
