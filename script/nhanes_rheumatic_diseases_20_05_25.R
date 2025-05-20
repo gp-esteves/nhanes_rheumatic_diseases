@@ -99,7 +99,7 @@ p_format_g <- function(p.value) {
 }
 
 # load raw dataset
-load(here("nhanes_raw_dataframe.Rdata"))
+load(here("data/nhanes_raw_dataframe.Rdata"))
 
 # creating and transforming variables before setting up survey design
 # nutrients
@@ -225,7 +225,7 @@ rh_dxa_all <- rh_dxa_all |>
 
 # load previously joined medication dataframe
 
-load("medication_df.Rdata")
+load("data/medication_df.Rdata")
 
 # create a string with the names of glucocorticoids 
 gluc_names <- c('^(DEFLAZACORT|PREDNISOLONE|DEXAMETHASONE|HYDROCORTISONE|METHYLPREDNISOLONE|PREDNISONE|CORTISONE)$')
@@ -533,7 +533,7 @@ plot(predict_response(model_wbBMD_proteingkg, "PTNgkg [all]"),
 
 # polynomial WB BMD models
 
-model_wbBMD_protein_poly <- svyglm(DXDTOBMD ~ bs(PTN, 2) + CHO + LIP + RIAGENDR + BMXWT + RIDAGEYR
+model_wbBMD_protein_poly <- svyglm(DXDTOBMD ~ poly(PTN, 2) + CHO + LIP + RIAGENDR + BMXWT + RIDAGEYR
                                    + MET + days_gc + EI_EER_class + disease_cat, 
                                    design=NHANES_subset_wb) 
 
